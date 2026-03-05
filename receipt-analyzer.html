@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Receipt Analyzer</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page">
+  <header>
+    <div class="header-title">
+      <div class="logo-line">Receipt<span>Scan</span></div>
+      <div class="subtitle">Receipt Analyzer · Claude AI</div>
+    </div>
+    <button class="refresh-btn" id="refreshBtn" title="Reset">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- API Key -->
+  <div class="api-section">
+    <div class="api-input-wrap">
+      <input type="password" id="apiKey" placeholder="sk-ant-api03-..." autocomplete="off">
+    </div>
+  </div>
+
+  <!-- Upload Zone -->
+  <div class="upload-zone" id="uploadZone">
+    <input type="file" id="fileInput" accept="image/*" capture="environment">
+    <div class="upload-icon">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="#0f0e0d" stroke-width="1.8">
+        <rect x="2" y="5" width="20" height="15" rx="1"/>
+        <circle cx="12" cy="13" r="4"/>
+        <circle cx="12" cy="13" r="1.8" fill="#e8521a" stroke="none"/>
+        <rect x="8" y="3" width="8" height="4" rx="1"/>
+      </svg>
+    </div>
+    <div>
+      <div class="upload-label">Upload Receipt</div>
+      <div class="upload-hint">PNG, JPG, WEBP · Click or drag and drop</div>
+    </div>
+  </div>
+
+  <div class="divider">or</div>
+
+  <!-- Camera Button -->
+  <button class="camera-btn" id="cameraBtn">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+      <circle cx="12" cy="13" r="4"/>
+    </svg>
+    Open Camera
+  </button>
+
+  <!-- Preview -->
+  <div class="preview-wrap" id="previewWrap">
+    <img id="previewImg" src="" alt="Preview">
+    <div class="preview-tag">Preview</div>
+    <button class="remove-btn" id="removeBtn" title="Remove">×</button>
+  </div>
+
+  <!-- Analyze Button -->
+  <button class="analyze-btn" id="analyzeBtn" disabled>
+    <span id="btnText">Analyze</span>
+    <div class="spinner" id="spinner"></div>
+  </button>
+
+  <!-- Results -->
+  <div class="results" id="results"></div>
+
+  <footer>Receipt Analyzer · Claude Vision API · 2025</footer>
+</div>
+
+<!-- Camera Modal -->
+<div class="modal-overlay" id="cameraModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span>📷 Camera</span>
+      <button class="modal-close" id="modalClose">×</button>
+    </div>
+    <video id="cameraVideo" autoplay playsinline muted></video>
+    <div class="modal-footer">
+      <button class="capture-btn" id="captureBtn">📸 Capture</button>
+      <button class="cancel-btn" id="cancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<canvas id="snapCanvas" style="display:none"></canvas>
+
+<script>
+const fileInput   = document.getElementById('fileInput');
+const uploadZone  = document.getElementById('uploadZone');
+const previewWrap = document.getElementById('previewWrap');
+const previewImg  = document.getElementById('previewImg');
+const removeBtn   = document.getElementById('removeBtn');
+const analyzeBtn  = document.getElementById('analyzeBtn');
+const spinner     = document.getElementById('spinner');
+const btnText     = document.getElementById('btnText');
+const results     = document.getElementById('results');
+const apiKeyInput = document.getElementById('apiKey');
+const cameraBtn   = document.getElementById('cameraBtn');
+const cameraModal = document.getElementById('cameraModal');
+const cameraVideo = document.getElementById('cameraVideo');
+const captureBtn  = document.getElementById('captureBtn');
+const cancelBtn   = document.getElementById('cancelBtn');
+const modalClose  = document.getElementById('modalClose');
+const snapCanvas  = document.getElementById('snapCanvas');
+const refreshBtn  = document.getElementById('refreshBtn');
+
+let currentImageBase64 = null;
+let currentMimeType    = null;
+let cameraStream       = null;
+
+// Reset
+refreshBtn.addEventListener('click', () => {
+  currentImageBase64  = null;
+  currentMimeType     = null;
+  previewWrap.classList.remove('visible');
+  previewImg.src      = '';
+  analyzeBtn.disabled = true;
+  fileInput.value     = '';
+  results.classList.remove('visible');
+  results.innerHTML   = '';
+  btnText.textContent = 'Analyze';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+// Upload
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadFile(file);
+});
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) loadFile(fileInput.files[0]);
+});
+
+function loadFile(file) {
+  currentMimeType = file.type || 'image/jpeg';
+  const reader = new FileReader();
+  reader.onload = e => {
+    currentImageBase64 = e.target.result.split(',')[1];
+    showPreview(e.target.result);
+  };
+  reader.readAsDataURL(file);
+}
+
+function showPreview(src) {
+  previewImg.src      = src;
+  previewWrap.classList.add('visible');
+  analyzeBtn.disabled = false;
+  results.classList.remove('visible');
+  results.innerHTML   = '';
+}
+
+removeBtn.addEventListener('click', () => {
+  currentImageBase64  = null;
+  currentMimeType     = null;
+  previewWrap.classList.remove('visible');
+  analyzeBtn.disabled = true;
+  fileInput.value     = '';
+  results.classList.remove('visible');
+});
+
+// Camera
+cameraBtn.addEventListener('click', openCamera);
+cancelBtn.addEventListener('click', closeCamera);
+modalClose.addEventListener('click', closeCamera);
+
+async function openCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    cameraVideo.srcObject = cameraStream;
+    cameraModal.classList.add('open');
+  } catch (e) {
+    alert('Camera not available: ' + e.message);
+  }
+}
+
+function closeCamera() {
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  cameraModal.classList.remove('open');
+}
+
+captureBtn.addEventListener('click', () => {
+  snapCanvas.width  = cameraVideo.videoWidth;
+  snapCanvas.height = cameraVideo.videoHeight;
+  snapCanvas.getContext('2d').drawImage(cameraVideo, 0, 0);
+  const dataUrl = snapCanvas.toDataURL('image/jpeg', 0.92);
+  currentImageBase64 = dataUrl.split(',')[1];
+  currentMimeType    = 'image/jpeg';
+  showPreview(dataUrl);
+  closeCamera();
+});
+
+// Analyze
+analyzeBtn.addEventListener('click', analyze);
+
+async function analyze() {
+  const apiKey = apiKeyInput.value.trim();
+  if (!apiKey) { alert('Please enter your API key.'); return; }
+  if (!currentImageBase64) { alert('Please upload a receipt image first.'); return; }
+
+  analyzeBtn.disabled   = true;
+  btnText.textContent   = 'Analyzing…';
+  spinner.style.display = 'block';
+  results.classList.remove('visible');
+  results.innerHTML     = '';
+
+  const prompt = `Analyze this receipt image and extract only the following fields.
+
+Return ONLY an <extracted_data> block with exactly these fields (use the exact label names):
+
+<extracted_data>
+<field><label>Date</label><value>date in DD.MM.YYYY format, or empty if not found</value></field>
+<field><label>Merchant</label><value>merchant/company name only (no address)</value></field>
+<field><label>City</label><value>city/town name from the receipt address</value></field>
+<field><label>Country</label><value>country name in English, e.g. Switzerland, Germany, USA</value></field>
+<field><label>Currency</label><value>3-letter ISO currency code, e.g. CHF, EUR, USD</value></field>
+<field><label>Total (gross)</label><value>total amount including tax, numeric only with 2 decimals</value></field>
+<field><label>VAT amount</label><value>tax amount, numeric only with 2 decimals, or 0.00 if not shown</value></field>
+<field><label>Total (net)</label><value>amount excluding tax (gross minus VAT), numeric only with 2 decimals</value></field>
+<field><label>VAT rate</label><value>tax rate as percentage, e.g. 8.1%, or empty if not determinable</value></field>
+</extracted_data>
+
+Rules:
+- Always output all 9 fields, even if the value is empty or 0.00
+- Numeric amounts: use period as decimal separator, no currency symbol, no thousands separator
+- If a value cannot be determined, leave the value empty`;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        temperature: 1,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: currentMimeType, data: currentImageBase64 } },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error?.message || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const text = data.content.map(b => b.text || '').join('');
+    renderResults(text);
+
+  } catch (err) {
+    results.innerHTML = `<div class="error-box"><strong>Error:</strong> ${escHtml(err.message)}</div>`;
+    results.classList.add('visible');
+  } finally {
+    analyzeBtn.disabled   = false;
+    btnText.textContent   = 'Analyze';
+    spinner.style.display = 'none';
+  }
+}
+
+// Helpers
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+const FIELDS = ['Date','Merchant','City','Country','Currency','Total (gross)','VAT amount','Total (net)','VAT rate'];
+
+function renderResults(text) {
+  const fieldRegex = /<field>\s*<label>([\s\S]*?)<\/label>\s*<value>([\s\S]*?)<\/value>\s*<\/field>/gi;
+  const map = {};
+  let m;
+  while ((m = fieldRegex.exec(text)) !== null) {
+    map[m[1].trim()] = m[2].trim();
+  }
+
+  const rowsHtml = FIELDS.map(label => `
+    <tr>
+      <td class="res-label">${escHtml(label)}</td>
+      <td class="res-value">${escHtml(map[label] || '—')}</td>
+    </tr>`).join('');
+
+  results.innerHTML = `
+    <div class="res-table-wrap">
+      <table class="res-table">
+        <thead><tr><th>Field</th><th>Value</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>`;
+
+  previewWrap.classList.remove('visible');
+  results.classList.add('visible');
+  results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+</script>
+</body>
+</html>
